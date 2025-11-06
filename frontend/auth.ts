@@ -1,8 +1,65 @@
 import NextAuth from "next-auth"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/prisma"
+import  CredentialsProvider from "next-auth/providers/credentials"
+import { comparePasswords } from "./lib/password-util"
  
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  useSecureCookies: process.env.NODE_ENV === "production", // 쿠키를 어떻게 사용할 거냐?
+  trustHost: true, // next.js 호스트 선택
+  secret: process.env.AUTH_SECRET,
   adapter: PrismaAdapter(prisma), // 어뎁터
-  providers: [],
-})
+  providers: [
+    CredentialsProvider({ // 이메일에 프로바이더 적용
+      name: 'credentials',
+      credentials: {
+        email: {
+          label: "이메일",
+          type: "email",
+          placeholder: "이메일 입력",
+        },
+        password: {
+          label: "비밀번호",
+          type: "password",
+          placeholder: "비밀번호 입력",
+        },
+      },
+      // 어떻게 인증을 처리할 것인가
+      async authorize(credentials) {
+        // 1. 모든 값들이 정상적으로 들어옴?
+
+        if (!credentials || !credentials.email || !credentials.password) {
+          throw new Error("이메일과 비밀번호를 입력해주세요.");
+        }
+
+        // 2. DB에서 유저를 찾기
+        const user = await prisma.user.findUnique({
+          where: {
+            email: credentials.email as string,
+          },
+        });
+
+        if (!user) {
+          throw new Error("존재하지 않는 이메일입니다.");
+        }
+
+        // 3. 비밀번호 일치여부 확인
+        const passwordMatch = comparePasswords(
+          credentials.password as string, 
+          user.hashedPassword as string
+        );
+
+        if (!passwordMatch) {
+          throw new Error("비밀번호가 일치하지 않습니다.");
+        }
+
+        return user;
+      }
+    })
+  ],
+  session: {
+    strategy: "jwt", // JWT 사용
+  },
+  pages: {},
+  callbacks: {}
+});
